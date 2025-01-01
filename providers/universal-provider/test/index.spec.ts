@@ -29,8 +29,9 @@ import {
   TEST_REQUIRED_NAMESPACES,
 } from "./shared/constants";
 import { getChainId, getGlobal, getRpcUrl, setGlobal } from "../src/utils";
-import { RPC_URL } from "../src/constants";
+import { BUNDLER_URL, RPC_URL } from "../src/constants";
 import { formatJsonRpcResult } from "@walletconnect/jsonrpc-utils";
+import { parseChainId } from "@walletconnect/utils";
 
 const getDbName = (_prefix: string) => {
   return `./test/tmp/${_prefix}.db`;
@@ -507,6 +508,264 @@ describe("UniversalProvider", function () {
         expect(provider.client.core.relayer.subscriber.subscriptions.size).to.eql(EXPECTED_SUBS);
         await provider.cleanupPendingPairings();
         expect(provider.client.core.relayer.subscriber.subscriptions.size).to.eql(1);
+      });
+    });
+    describe("call status", () => {
+      it("should get call status request to wallet when bundler id is not provided", async () => {
+        const dapp = await UniversalProvider.init({
+          ...TEST_PROVIDER_OPTS,
+          name: "dapp",
+        });
+        const wallet = await UniversalProvider.init({
+          ...TEST_PROVIDER_OPTS,
+          name: "wallet",
+        });
+        const chains = ["eip155:1"];
+        await testConnectMethod(
+          {
+            dapp,
+            wallet,
+          },
+          {
+            requiredNamespaces: {
+              eip155: {
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            optionalNamespaces: {
+              eip155: {
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            namespaces: {
+              eip155: {
+                accounts: chains.map((chain) => `${chain}:${walletAddress}`),
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+          },
+        );
+        const testResult = { result: "test result " };
+        await Promise.all([
+          new Promise<void>((resolve) => {
+            wallet.client.on("session_request", async (event) => {
+              expect(event.params.request.method).to.eql("wallet_getCallsStatus");
+              await wallet.client.respond({
+                topic: event.topic,
+                response: formatJsonRpcResult(event.id, testResult),
+              });
+              resolve();
+            });
+          }),
+          new Promise<void>(async (resolve) => {
+            const result = await dapp.request({
+              method: "wallet_getCallsStatus",
+              params: ["test params"],
+            });
+            expect(result).to.eql(testResult);
+            resolve();
+          }),
+        ]);
+      });
+      it("should get call status request to bundler when custom bundler url is provided", async () => {
+        const dapp = await UniversalProvider.init({
+          ...TEST_PROVIDER_OPTS,
+          name: "dapp",
+        });
+        const wallet = await UniversalProvider.init({
+          ...TEST_PROVIDER_OPTS,
+          name: "wallet",
+        });
+        const chains = ["eip155:1"];
+        const customBundlerUrl = "https://custom-bundler.com";
+        await testConnectMethod(
+          {
+            dapp,
+            wallet,
+          },
+          {
+            requiredNamespaces: {
+              eip155: {
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            optionalNamespaces: {
+              eip155: {
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            namespaces: {
+              eip155: {
+                accounts: chains.map((chain) => `${chain}:${walletAddress}`),
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            sessionProperties: { bundler_url: customBundlerUrl },
+          },
+        );
+        const testResult = { result: "test result " };
+        // @ts-ignore
+        dapp.rpcProviders.eip155.getUserOperationReceipt = (bundlerUrl: string, args: any) => {
+          expect(bundlerUrl).to.eql(customBundlerUrl);
+          expect(args.request.method).to.eql("wallet_getCallsStatus");
+          return testResult;
+        };
+        await Promise.all([
+          new Promise<void>(async (resolve) => {
+            const result = await dapp.request({
+              method: "wallet_getCallsStatus",
+              params: ["test params"],
+            });
+            expect(result).to.eql(testResult);
+            resolve();
+          }),
+        ]);
+      });
+      it("should get call status request to bundler when bundler name is provided", async () => {
+        const dapp = await UniversalProvider.init({
+          ...TEST_PROVIDER_OPTS,
+          name: "dapp",
+        });
+        const wallet = await UniversalProvider.init({
+          ...TEST_PROVIDER_OPTS,
+          name: "wallet",
+        });
+        const chains = ["eip155:1"];
+        await testConnectMethod(
+          {
+            dapp,
+            wallet,
+          },
+          {
+            requiredNamespaces: {
+              eip155: {
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            optionalNamespaces: {
+              eip155: {
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            namespaces: {
+              eip155: {
+                accounts: chains.map((chain) => `${chain}:${walletAddress}`),
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            sessionProperties: { bundler_name: "pimlico" },
+          },
+        );
+        const testResult = { result: "test result " };
+        // @ts-ignore
+        dapp.rpcProviders.eip155.getUserOperationReceipt = (bundlerUrl: string, args: any) => {
+          expect(bundlerUrl).to.include(BUNDLER_URL);
+          expect(args.request.method).to.eql("wallet_getCallsStatus");
+          return testResult;
+        };
+        await Promise.all([
+          new Promise<void>(async (resolve) => {
+            const result = await dapp.request({
+              method: "wallet_getCallsStatus",
+              params: ["test params"],
+            });
+            expect(result).to.eql(testResult);
+            resolve();
+          }),
+        ]);
+      });
+      it("should get call status request to bundler and wallet when bundler url fails", async () => {
+        const dapp = await UniversalProvider.init({
+          ...TEST_PROVIDER_OPTS,
+          name: "dapp",
+        });
+        const wallet = await UniversalProvider.init({
+          ...TEST_PROVIDER_OPTS,
+          name: "wallet",
+        });
+        const chains = ["eip155:1"];
+        await testConnectMethod(
+          {
+            dapp,
+            wallet,
+          },
+          {
+            requiredNamespaces: {
+              eip155: {
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            optionalNamespaces: {
+              eip155: {
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            namespaces: {
+              eip155: {
+                accounts: chains.map((chain) => `${chain}:${walletAddress}`),
+                chains,
+                methods: ["wallet_getCallsStatus"],
+                events,
+              },
+            },
+            sessionProperties: { bundler_name: "pimlico" },
+          },
+        );
+        const testResult = { result: "test result " };
+        // @ts-ignore
+        dapp.rpcProviders.eip155.getUserOperationReceipt = (bundlerUrl: string, args: any) => {
+          throw new Error("Failed to fetch call status from bundler");
+        };
+        await Promise.all([
+          new Promise<void>((resolve) => {
+            wallet.client.on("session_request", async (event) => {
+              expect(event.params.request.method).to.eql("wallet_getCallsStatus");
+              await wallet.client.respond({
+                topic: event.topic,
+                response: formatJsonRpcResult(event.id, testResult),
+              });
+              resolve();
+            });
+          }),
+          new Promise<void>(async (resolve) => {
+            const result = await dapp.request({
+              method: "wallet_getCallsStatus",
+              params: ["test params"],
+            });
+            expect(result).to.eql(testResult);
+            resolve();
+          }),
+        ]);
+      });
+      it("should receive rejection on get call status request when no bundler url or method is not approved", async () => {
+        await expect(
+          provider.request({
+            method: "wallet_getCallsStatus",
+            params: ["test params"],
+          }),
+        ).rejects.toThrowError("Fetching call status not approved by the wallet.");
       });
     });
     describe("caip validation", () => {
@@ -1150,6 +1409,64 @@ describe("UniversalProvider", function () {
         expect(url).to.eql(
           getRpcUrl(getChainId(chains[i]), {} as Namespace, TEST_PROVIDER_OPTS.projectId),
         );
+      });
+
+      await deleteProviders({ A: dapp, B: wallet });
+    });
+    it("should init generic provider if provider for given namespace doesn't exist", async () => {
+      const dapp = await UniversalProvider.init({
+        ...TEST_PROVIDER_OPTS,
+        name: "dapp",
+      });
+      const wallet = await UniversalProvider.init({
+        ...TEST_PROVIDER_OPTS,
+        name: "wallet",
+      });
+      const tronChains = [
+        `tron:4sGjMW1sUnHzSxGspuhpqLDx6wiyjNtZ`,
+        `tron:8E9rvCKLFQia2Y35HXjjpWzj8weVo44K`,
+      ];
+      const zoraChains = [`zora:1`, `zora:2`];
+      await testConnectMethod(
+        {
+          dapp,
+          wallet,
+        },
+        {
+          requiredNamespaces: {},
+          optionalNamespaces: {},
+          namespaces: {
+            tron: {
+              accounts: tronChains.map((chain) => `${chain}:${walletAddress}`),
+              chains: tronChains,
+              methods,
+              events,
+            },
+            zora: {
+              accounts: zoraChains.map((chain) => `${chain}:${walletAddress}`),
+              chains: zoraChains,
+              methods,
+              events,
+            },
+          },
+        },
+      );
+      await throttle(1_000);
+      expect(dapp.rpcProviders).to.be.an("object");
+      expect(dapp.rpcProviders.generic).to.exist;
+      expect(dapp.rpcProviders.generic).to.be.an("object");
+
+      const httpProviders = dapp.rpcProviders.generic.httpProviders;
+
+      expect(Object.keys(httpProviders).length).is.greaterThan(0);
+      expect(Object.keys(httpProviders).length).to.eql(tronChains.length + zoraChains.length);
+
+      const allChains = [...tronChains, ...zoraChains];
+      Object.values(httpProviders).forEach((provider, i) => {
+        const url = provider.connection.url as string;
+        expect(url).to.include("https://");
+        expect(url).to.include(RPC_URL);
+        expect(url).to.eql(getRpcUrl(allChains[i], {} as Namespace, TEST_PROVIDER_OPTS.projectId));
       });
 
       await deleteProviders({ A: dapp, B: wallet });

@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  base64Encode,
-  buildNamespacesFromAuth,
   createEncodedRecap,
   createRecap,
   decodeRecap,
   encodeRecap,
   formatMessage,
-  formatStatementFromRecap,
   getChainsFromRecap,
   getCommonValuesInArrays,
   getDecodedRecapFromResources,
@@ -19,7 +16,7 @@ import {
 
 describe("URI", () => {
   describe("merge recaps", () => {
-    it("shoud merge recaps", () => {
+    it("should merge recaps", () => {
       const recap1 = {
         att: {
           "https://notify.walletconnect.com": { "manage/all-apps-notifications": [{}] },
@@ -48,7 +45,7 @@ describe("URI", () => {
       };
       expect(JSON.stringify(recap)).to.eql(JSON.stringify(expected));
     });
-    it("shoud merge recaps with different keys", () => {
+    it("should merge recaps with different keys", () => {
       const recap1 = createRecap("https://web3inbox.com", "push", ["notifications", "alerts"]);
       const recap2 = createRecap("eip155", "request", ["personal_sign", "eth_sendTransaction"]);
       const expected = {
@@ -66,7 +63,7 @@ describe("URI", () => {
       const mergedRecap = mergeRecaps(recap1, recap2);
       expect(JSON.stringify(mergedRecap)).to.eql(JSON.stringify(expected));
     });
-    it("shoud merge recaps with same resource", () => {
+    it("should merge recaps with same resource", () => {
       const recap1 = createRecap("eip155", "push", ["notifications", "alerts"]);
       const recap2 = createRecap("eip155", "request", ["personal_sign", "eth_sendTransaction"]);
       const expected = {
@@ -82,7 +79,7 @@ describe("URI", () => {
       const mergedRecap = mergeRecaps(recap1, recap2);
       expect(JSON.stringify(mergedRecap)).to.eql(JSON.stringify(expected));
     });
-    it("shoud merge recaps with same resource & actions", () => {
+    it("should merge recaps with same resource & actions", () => {
       const recap1 = createRecap("eip155", "request", ["personal_sign", "notifications"]);
       const recap2 = createRecap("eip155", "request", ["alerts", "eth_sendTransaction"]);
       const expected = {
@@ -100,7 +97,7 @@ describe("URI", () => {
     });
   });
 
-  it("shoud encode recap", () => {
+  it("should encode recap", () => {
     const recap = createRecap("eip155", "request", ["personal_sign", "eth_signTypedData_v4"]);
     isValidRecap(recap);
     const encoded = encodeRecap(recap);
@@ -256,7 +253,7 @@ describe("URI", () => {
     expect(message).to.include("Nonce: 32891756");
     expect(message).to.include(`URI: ${request.aud}`);
   });
-  describe("resurces", () => {
+  describe("resources", () => {
     it("should not add resources to siwe message when missing from request", () => {
       const request = {
         type: "caip122",
@@ -327,6 +324,41 @@ describe("URI", () => {
       expect(message).to.include("Version: 1");
       expect(message).to.include("Nonce: 1");
       expect(message).to.include(`URI: ${request.aud}`);
+      expect(message).to.include(`Resources:`);
+      expect(message).to.include(request.resources[0]);
+    });
+
+    it("should add optional params to siwe message", () => {
+      const request = {
+        type: "caip122",
+        chains: ["eip155:1"],
+        aud: "https://example.com",
+        domain: "http://localhost:3000",
+        version: "1",
+        nonce: "1",
+        iat: "2024-02-19T09:29:21.394Z",
+        exp: "2024-02-25T09:29:21.394Z",
+        nbf: "2024-02-20T09:29:21.394Z",
+        requestId: "123",
+        statement: "Requesting access to your account",
+        resources: [
+          "https://example.com",
+          "urn:recap:eyJhdHQiOnsiZWlwMTU1Ijp7InJlcXVlc3QvZXRoX2NoYWluSWQiOlt7fV0sInJlcXVlc3QvZXRoX3NpZ25UeXBlZERhdGFfdjQiOlt7fV0sInB1c2gvcGVyc29uYWxfc2lnbiI6W3t9XX0sImh0dHBzOi8vbm90aWZ5LndhbGxldGNvbm5lY3QuY29tIjp7Im1hbmFnZS9hbGwtYXBwcy1ub3RpZmljYXRpb25zIjpbe31dLCJlbWl0L2FsZXJ0cyI6W3t9XX19fQ",
+        ],
+      };
+
+      const message = formatMessage(
+        request as any,
+        "did:pkh:eip155:1:0x3613699A6c5D8BC97a08805876c8005543125F09",
+      );
+
+      expect(message).to.include("Version: 1");
+      expect(message).to.include("Nonce: 1");
+      expect(message).to.include(`URI: ${request.aud}`);
+      expect(message).to.include(`Issued At: ${request.iat}`);
+      expect(message).to.include(`Expiration Time: ${request.exp}`);
+      expect(message).to.include(`Not Before: ${request.nbf}`);
+      expect(message).to.include(`Request ID: ${request.requestId}`);
       expect(message).to.include(`Resources:`);
       expect(message).to.include(request.resources[0]);
     });

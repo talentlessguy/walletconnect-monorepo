@@ -8,6 +8,7 @@ import {
   RelayerTypes,
   PairingJsonRpcTypes,
   ExpirerTypes,
+  EventClientTypes,
 } from "@walletconnect/types";
 import {
   getInternalError,
@@ -45,6 +46,9 @@ import {
   RELAYER_EVENTS,
   EXPIRER_EVENTS,
   PAIRING_EVENTS,
+  EVENT_CLIENT_PAIRING_TRACES,
+  EVENT_CLIENT_PAIRING_ERRORS,
+  TRANSPORT_TYPES,
 } from "../constants";
 import { Store } from "../controllers/store";
 
@@ -92,7 +96,7 @@ export class Pairing implements IPairing {
     const topic = await this.core.crypto.setSymKey(symKey);
     const expiry = calcExpiry(FIVE_MINUTES);
     const relay = { protocol: RELAYER_DEFAULT_PROTOCOL };
-    const pairing = { topic, expiry, relay, active: false };
+    const pairing = { topic, expiry, relay, active: false, methods: params?.methods };
     const uri = formatUri({
       protocol: this.core.protocol,
       version: this.core.version,
@@ -102,24 +106,43 @@ export class Pairing implements IPairing {
       expiryTimestamp: expiry,
       methods: params?.methods,
     });
+    this.events.emit(PAIRING_EVENTS.create, pairing);
     this.core.expirer.set(topic, expiry);
     await this.pairings.set(topic, pairing);
-    await this.core.relayer.subscribe(topic);
+    await this.core.relayer.subscribe(topic, { transportType: params?.transportType });
 
     return { topic, uri };
   };
 
   public pair: IPairing["pair"] = async (params) => {
     this.isInitialized();
-    this.isValidPair(params);
+
+    const event = this.core.eventClient.createEvent({
+      properties: {
+        topic: params?.uri,
+        trace: [EVENT_CLIENT_PAIRING_TRACES.pairing_started],
+      },
+    });
+
+    this.isValidPair(params, event);
+
     const { topic, symKey, relay, expiryTimestamp, methods } = parseUri(params.uri);
+
+    event.props.properties.topic = topic;
+    event.addTrace(EVENT_CLIENT_PAIRING_TRACES.pairing_uri_validation_success);
+    event.addTrace(EVENT_CLIENT_PAIRING_TRACES.pairing_uri_not_expired);
+
     let existingPairing;
     if (this.pairings.keys.includes(topic)) {
       existingPairing = this.pairings.get(topic);
+      event.addTrace(EVENT_CLIENT_PAIRING_TRACES.existing_pairing);
       if (existingPairing.active) {
+        event.setError(EVENT_CLIENT_PAIRING_ERRORS.active_pairing_already_exists);
         throw new Error(
           `Pairing already exists: ${topic}. Please try again with a new connection URI.`,
         );
+      } else {
+        event.addTrace(EVENT_CLIENT_PAIRING_TRACES.pairing_not_expired);
       }
     }
 
@@ -128,17 +151,37 @@ export class Pairing implements IPairing {
     this.core.expirer.set(topic, expiry);
     await this.pairings.set(topic, pairing);
 
+    event.addTrace(EVENT_CLIENT_PAIRING_TRACES.store_new_pairing);
+
     if (params.activatePairing) {
       await this.activate({ topic });
     }
 
     this.events.emit(PAIRING_EVENTS.create, pairing);
 
+    event.addTrace(EVENT_CLIENT_PAIRING_TRACES.emit_inactive_pairing);
+
     // avoid overwriting keychain pairing already exists
     if (!this.core.crypto.keychain.has(topic)) {
       await this.core.crypto.setSymKey(symKey, topic);
     }
-    await this.core.relayer.subscribe(topic, { relay });
+    event.addTrace(EVENT_CLIENT_PAIRING_TRACES.subscribing_pairing_topic);
+
+    try {
+      await this.core.relayer.confirmOnlineStateOrThrow();
+    } catch (error) {
+      event.setError(EVENT_CLIENT_PAIRING_ERRORS.no_internet_connection);
+    }
+
+    try {
+      await this.core.relayer.subscribe(topic, { relay });
+    } catch (error) {
+      event.setError(EVENT_CLIENT_PAIRING_ERRORS.subscribe_pairing_topic_failure);
+      throw error;
+    }
+
+    event.addTrace(EVENT_CLIENT_PAIRING_TRACES.subscribe_pairing_topic_success);
+
     return pairing;
   };
 
@@ -187,6 +230,21 @@ export class Pairing implements IPairing {
       await this.sendRequest(topic, "wc_pairingDelete", getSdkError("USER_DISCONNECTED"));
       await this.deletePairing(topic);
     }
+  };
+
+  public formatUriFromPairing: IPairing["formatUriFromPairing"] = (pairing) => {
+    this.isInitialized();
+    const { topic, relay, expiry, methods } = pairing;
+    const symKey = this.core.crypto.keychain.get(topic);
+    return formatUri({
+      protocol: this.core.protocol,
+      version: this.core.version,
+      topic,
+      symKey,
+      relay,
+      expiryTimestamp: expiry,
+      methods,
+    });
   };
 
   // ---------- Private Helpers ----------------------------------------------- //
@@ -247,10 +305,13 @@ export class Pairing implements IPairing {
 
   private registerRelayerEvents() {
     this.core.relayer.on(RELAYER_EVENTS.message, async (event: RelayerTypes.MessageEvent) => {
-      const { topic, message } = event;
+      const { topic, message, transportType } = event;
 
       // Do not handle if the topic is not related to known pairing topics.
       if (!this.pairings.keys.includes(topic)) return;
+
+      // Do not handle link-mode messages
+      if (transportType === TRANSPORT_TYPES.link_mode) return;
 
       // messages of certain types should be ignored as they are handled by their respective SDKs
       if (this.ignoredPayloadTypes.includes(this.core.crypto.getPayloadType(message))) return;
@@ -380,27 +441,32 @@ export class Pairing implements IPairing {
 
   // ---------- Validation Helpers ----------------------------------- //
 
-  private isValidPair = (params: { uri: string }) => {
+  private isValidPair = (params: { uri: string }, event: EventClientTypes.Event) => {
     if (!isValidParams(params)) {
       const { message } = getInternalError("MISSING_OR_INVALID", `pair() params: ${params}`);
+      event.setError(EVENT_CLIENT_PAIRING_ERRORS.malformed_pairing_uri);
       throw new Error(message);
     }
     if (!isValidUrl(params.uri)) {
       const { message } = getInternalError("MISSING_OR_INVALID", `pair() uri: ${params.uri}`);
+      event.setError(EVENT_CLIENT_PAIRING_ERRORS.malformed_pairing_uri);
       throw new Error(message);
     }
-    const uri = parseUri(params.uri);
+    const uri = parseUri(params?.uri);
     if (!uri?.relay?.protocol) {
       const { message } = getInternalError("MISSING_OR_INVALID", `pair() uri#relay-protocol`);
+      event.setError(EVENT_CLIENT_PAIRING_ERRORS.malformed_pairing_uri);
       throw new Error(message);
     }
     if (!uri?.symKey) {
       const { message } = getInternalError("MISSING_OR_INVALID", `pair() uri#symKey`);
+      event.setError(EVENT_CLIENT_PAIRING_ERRORS.malformed_pairing_uri);
       throw new Error(message);
     }
     if (uri?.expiryTimestamp) {
       const expiration = toMiliseconds(uri?.expiryTimestamp);
       if (expiration < Date.now()) {
+        event.setError(EVENT_CLIENT_PAIRING_ERRORS.pairing_expired);
         const { message } = getInternalError(
           "EXPIRED",
           `pair() URI has expired. Please try again with a new connection URI.`,

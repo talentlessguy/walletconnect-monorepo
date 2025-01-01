@@ -74,15 +74,26 @@ export const EIP155_TEST_METHODS = [
   "wallet_switchEthereumChain",
 ];
 
+export const ALGORAND_TEST_METHODS = ["algo_signTxn"];
 export const COSMOS_TEST_METHODS = ["cosmos_signDirect", "cosmos_signAmino"];
 export const ELROND_TEST_METHODS = ["erd_signTransaction", "erd_signLoginToken"];
 export const MULTIVERSX_TEST_METHODS = ["multiversx_signTransaction", "multiversx_signMessage"];
+export const TEZOS_TEST_METHODS = ["tezos_send", "tezos_sign"];
 
 export const TEST_NAMESPACES_CONFIG = {
   namespaces: {
     eip155: {
       methods: EIP155_TEST_METHODS,
       chains: [`eip155:${CHAIN_ID}`, `eip155:${CHAIN_ID_B}`],
+      events: ["chainChanged", "accountsChanged"],
+      rpcMap: {
+        [CHAIN_ID]: RPC_URL,
+        [CHAIN_ID_B]: RPC_URL_B,
+      },
+    },
+    algorand: {
+      methods: ALGORAND_TEST_METHODS,
+      chains: [`algorand:${CHAIN_ID}`, `algorand:${CHAIN_ID_B}`],
       events: ["chainChanged", "accountsChanged"],
       rpcMap: {
         [CHAIN_ID]: RPC_URL,
@@ -110,6 +121,15 @@ export const TEST_NAMESPACES_CONFIG = {
     multiversx: {
       methods: MULTIVERSX_TEST_METHODS,
       chains: [`multiversx:${CHAIN_ID}`, `multiversx:${CHAIN_ID_B}`],
+      events: ["chainChanged", "accountsChanged"],
+      rpcMap: {
+        [CHAIN_ID]: RPC_URL,
+        [CHAIN_ID_B]: RPC_URL_B,
+      },
+    },
+    tezos: {
+      methods: TEZOS_TEST_METHODS,
+      chains: [`tezos:${CHAIN_ID}`, `tezos:${CHAIN_ID_B}`],
       events: ["chainChanged", "accountsChanged"],
       rpcMap: {
         [CHAIN_ID]: RPC_URL,

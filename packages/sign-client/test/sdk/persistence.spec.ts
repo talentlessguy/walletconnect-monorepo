@@ -32,6 +32,9 @@ describe("Sign Client Persistence", () => {
             },
           );
 
+          expect(clients.A.core.relayer.connected).toBe(false);
+          expect(clients.B.core.relayer.connected).toBe(false);
+
           const {
             pairingA: { topic },
           } = await testConnectMethod(clients);
@@ -48,11 +51,14 @@ describe("Sign Client Persistence", () => {
                 resolve(event);
               });
             }),
-            new Promise(async (resolve) => {
-              // ping
-              await clients.A.ping({ topic });
-              await clients.B.ping({ topic });
-              resolve(true);
+            new Promise<void>(async (resolve, reject) => {
+              try {
+                await clients.A.ping({ topic });
+                await clients.B.ping({ topic });
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
             }),
           ]);
 
@@ -66,6 +72,9 @@ describe("Sign Client Persistence", () => {
               storageOptions: { database: db_b },
             },
           );
+
+          expect(clients.A.core.relayer.connected).toBe(true);
+          expect(clients.B.core.relayer.connected).toBe(true);
 
           // ping
           await clients.A.ping({ topic });
@@ -104,11 +113,14 @@ describe("Sign Client Persistence", () => {
                 resolve(event);
               });
             }),
-            new Promise(async (resolve) => {
-              // ping
-              await clients.A.ping({ topic });
-              await clients.B.ping({ topic });
-              resolve(true);
+            new Promise<void>(async (resolve, reject) => {
+              try {
+                await clients.A.ping({ topic });
+                await clients.B.ping({ topic });
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
             }),
           ]);
 
@@ -291,13 +303,26 @@ describe("Sign Client Persistence", () => {
         storageOptions: { database: db_a },
       });
       let lastAccountEvent: any;
-      clients.A.on("session_event", (event) => {
-        lastAccountEvent = event.params.event.data;
-      });
-      await throttle(10_000);
+      await Promise.all([
+        new Promise<void>((resolve) => {
+          clients.A.on("session_update", (event) => {
+            resolve();
+          });
+        }),
+        new Promise<void>((resolve) => {
+          clients.A.on("session_event", (event) => {
+            lastAccountEvent = event.params.event.data;
+            if (lastAccountEvent[0] === lastAccountsChangedValue[0]) {
+              resolve();
+            }
+          });
+        }),
+      ]);
+
+      await throttle(2_000);
+
       const session = clients.A.session.get(topic);
       expect(session).toBeDefined();
-
       expect(session.namespaces).toEqual(lastWalletSessionNamespacesValue);
       expect(lastAccountEvent).toEqual(lastAccountsChangedValue);
 
